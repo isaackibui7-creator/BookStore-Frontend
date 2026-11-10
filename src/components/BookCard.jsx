@@ -1,0 +1,39 @@
+import { Link } from "react-router-dom";
+import { formatCurrency } from "../utils/format.js";
+import Badge from "./Badge.jsx";
+
+export default function BookCard({ book, onAdd }) {
+  return (
+    <article className="book-card">
+      <Link to={`/book/${book.id}`} className="book-cover">
+        <img
+          src={book.coverUrl || "/placeholder-cover.svg"}
+          alt={book.title}
+          loading="lazy"
+        />
+      </Link>
+      <div className="book-info">
+        <div className="book-head">
+          <Badge>{book.category || "Ebook"}</Badge>
+          <span className="book-delivery">Instant delivery</span>
+        </div>
+        <div>
+          <h3>{book.title}</h3>
+          <p className="muted">Author: {book.author}</p>
+          {book.isbn && (
+            <p className="muted" style={{ fontSize: "0.78rem", marginTop: "2px" }}>
+              ISBN NO: {book.isbn}
+            </p>
+          )}
+        </div>
+        <div className="book-meta">
+          <span className="price">{formatCurrency(book.price)}</span>
+          <span className="muted">Digital product</span>
+        </div>
+        <button type="button" className="primary" onClick={() => onAdd(book)}>
+          BUY NOW
+        </button>
+      </div>
+    </article>
+  );
+}

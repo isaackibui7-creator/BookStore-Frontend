@@ -2,7 +2,6 @@ import { useMemo, useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import {
   doc,
-  onSnapshot,
   serverTimestamp,
   updateDoc
 } from "firebase/firestore";
@@ -36,8 +35,6 @@ const shouldFallbackOrderCreate = (err) => {
     message.includes("load failed") ||
     message.includes("timeout");
 
-  // Fallback writes go through Firestore client rules. Keep this for
-  // development-only network outages, not server-side application errors.
   return !import.meta.env.PROD && looksLikeNetworkIssue;
 };
 
@@ -84,7 +81,6 @@ const triggerDownload = async (url, filename) => {
   const proxyBase = import.meta.env.VITE_DOWNLOAD_PROXY_URL ||
     (import.meta.env.PROD ? "/api/download" : "");
 
-  // In production, use the server-side proxy which signs the Cloudinary URL
   if (proxyBase) {
     try {
       const proxyUrl = new URL(proxyBase, window.location.origin);
@@ -114,7 +110,6 @@ const triggerDownload = async (url, filename) => {
     }
   }
 
-  // Fallback: try fl_attachment via iframe (works if files are public)
   try {
     const parts = url.split("/upload/");
     if (parts.length >= 2) {
@@ -129,7 +124,6 @@ const triggerDownload = async (url, filename) => {
     }
   } catch { /* ignore */ }
 
-  // Last resort
   window.open(url, "_blank");
 };
 
@@ -176,49 +170,20 @@ export default function Checkout() {
     };
   }, []);
 
+  // --- POLLING: Fetch status from backend (NOT Firebase onSnapshot) ---
   useEffect(() => {
     if (!orderId) return;
 
-    const unsubscribe = onSnapshot(
-      doc(db, "orders", orderId),
-      (snapshot) => {
-        if (!snapshot.exists()) return;
-        const data = snapshot.data();
+    // Start polling the backend
+    startStatusPolling(orderId);
 
-        const normalizedStatus = normalizeStatus(data.status);
-
-        setOrderStatus(normalizedStatus);
-
-        if (Array.isArray(data.items) && data.items.length > 0) {
-          setPurchasedItems(data.items);
-        }
-
-        if (isPaidStatus(normalizedStatus)) {
-          setStatus("Payment confirmed! Your download is ready below.");
-          setPlacing(false);
-          clearCart();
-          if (statusPollRef.current) {
-            clearInterval(statusPollRef.current);
-            statusPollRef.current = null;
-          }
-        } else if (isFailedStatus(normalizedStatus)) {
-          const reason =
-            data.failureReason || data.payment?.failureReason || "";
-          setStatus(buildFailureMessage(normalizedStatus, reason));
-          setPlacing(false);
-          if (statusPollRef.current) {
-            clearInterval(statusPollRef.current);
-            statusPollRef.current = null;
-          }
-        }
-      },
-      () => {
-        setStatus("Unable to confirm payment status. Please refresh.");
+    return () => {
+      if (statusPollRef.current) {
+        clearInterval(statusPollRef.current);
+        statusPollRef.current = null;
       }
-    );
-
-    return () => unsubscribe();
-  }, [orderId, clearCart]);
+    };
+  }, [orderId]);
 
   const buildOrderItems = (cartItems) =>
     cartItems.map((item) => ({
@@ -252,7 +217,7 @@ export default function Checkout() {
   };
 
   const runStatusCheck = async (targetOrderId, options = {}) => {
-    const { silent = false, checkoutId = "" } = options;
+    const { silent = false } = options;
 
     if (!targetOrderId || statusRequestPendingRef.current) {
       return false;
@@ -262,8 +227,7 @@ export default function Checkout() {
 
     try {
       const response = await checkPaymentStatus({
-        orderId: targetOrderId,
-        checkoutId
+        orderId: targetOrderId
       });
       const nextOrder = response?.order;
       const nextStatus = normalizeStatus(
@@ -310,16 +274,16 @@ export default function Checkout() {
     return false;
   };
 
-  const startStatusPolling = (targetOrderId, checkoutId = "") => {
+  const startStatusPolling = (targetOrderId) => {
     if (statusPollRef.current) {
       clearInterval(statusPollRef.current);
       statusPollRef.current = null;
     }
 
-    void runStatusCheck(targetOrderId, { silent: true, checkoutId });
+    void runStatusCheck(targetOrderId, { silent: true });
 
     statusPollRef.current = setInterval(() => {
-      void runStatusCheck(targetOrderId, { silent: true, checkoutId });
+      void runStatusCheck(targetOrderId, { silent: true });
     }, 6000);
   };
 
@@ -431,7 +395,7 @@ export default function Checkout() {
       setStatus("Please check your phone and enter your M-Pesa PIN.");
 
       if (checkoutRequestId) {
-        startStatusPolling(createdOrderId, checkoutRequestId);
+        startStatusPolling(createdOrderId);
       }
     } catch (stkErr) {
       const message = stkErr?.message || "Failed to start payment.";
@@ -443,13 +407,10 @@ export default function Checkout() {
           "payment.gatewayStatus": "failed",
           "payment.updatedAt": serverTimestamp()
         });
-      } catch {
-        // ignore update failures
-      }
+      } catch { /* ignore */ }
       finalizeCheckout();
     }
   };
-
 
   return (
     <div className="page">
@@ -534,11 +495,9 @@ export default function Checkout() {
                   />
                 </div>
                 {!user ? (
-                  <>
-                    <p className="muted">
-                      Sign in with Google to link this order to your library account.
-                    </p>
-                  </>
+                  <p className="muted">
+                    Sign in with Google to link this order to your library account.
+                  </p>
                 ) : (
                   <p className="muted">
                     This order will be linked to <strong>{user.email}</strong>.
